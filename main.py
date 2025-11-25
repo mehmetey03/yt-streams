@@ -306,9 +306,9 @@ def fetch_stream_url(stream_config, attempt_num=1):
         return None, 'InvalidType'
     
     # Build request URL
-    url = f"{ENDPOINT}?ID={stream_id}"
-    
-    print(f"  Fetching: {url}")
+url = f"{ENDPOINT}?ID={stream_id}"
+
+print(f"  Fetching: {url}")
     
     try:
         # Prepare headers
