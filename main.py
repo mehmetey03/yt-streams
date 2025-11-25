@@ -306,20 +306,21 @@ def fetch_stream_url(stream_config, attempt_num=1):
         return None, 'InvalidType'
     
     # Build request URL
-url = f"{ENDPOINT}?ID={stream_id}"
+    url = f"{ENDPOINT}?ID={stream_id}"
 
-print(f"  Fetching: {url}")
-    
+    print(f"  Fetching: {url}")
+
     try:
-        # Prepare headers
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        }
+    # Prepare headers
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    }
+
         
         print(f"  → Sending GET request (timeout={TIMEOUT}s, attempt={attempt_num})...")
         
