@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube Stream Updater - ENDPOINT is fully hidden
+YouTube Stream Updater - URL Extractor Version
 """
 
 import json
@@ -10,17 +10,16 @@ import argparse
 from pathlib import Path
 
 # --- ENDPOINT IS HIDDEN ---
-ENDPOINT = os.environ.get("ENDPOINT")  # <-- NO DEFAULT URL
+ENDPOINT = os.environ.get("ENDPOINT")
 if not ENDPOINT:
     print("❌ ERROR: ENDPOINT environment variable is not set!")
     sys.exit(1)
 
-ENDPOINT = ENDPOINT.rstrip("/")  # just clean it
+ENDPOINT = ENDPOINT.rstrip("/")
 
 FOLDER_NAME = "streams"
 TIMEOUT = 25
 
-# Session selection
 try:
     from curl_cffi import requests as curl_requests
     SESSION_TYPE = "curl_cffi"
@@ -28,18 +27,14 @@ except ImportError:
     import requests
     SESSION_TYPE = "requests"
 
-
-# Create session for requests
 if SESSION_TYPE == "requests":
     session = requests.Session()
 else:
     session = None
 
-
 def load_config(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def make_request(url, headers):
     if SESSION_TYPE == "curl_cffi":
@@ -58,44 +53,46 @@ def make_request(url, headers):
             allow_redirects=True
         )
 
-
 def fetch_stream_url(stream):
     stream_id = stream["id"]
     slug = stream["slug"]
 
-    # Construct Worker URL (NOT visible)
     url = f"{ENDPOINT}/?ID={stream_id}"
-
     print(f"  Fetching: {url}")
 
     headers = {
         "User-Agent": "Mozilla/5.0",
-        "Accept": "*/*",
+        "Accept": "application/json", # JSON beklediğimizi belirtiyoruz
         "Connection": "keep-alive"
     }
 
     try:
         resp = make_request(url, headers)
-
-        # Retry if Worker gives empty 404
+        
         if resp.status_code == 404:
             print("  ⚠ 404 returned, retrying…")
             resp = make_request(url, headers)
 
         resp.raise_for_status()
-        text = resp.text
+        
+        # Yanıtı JSON olarak ayrıştırıyoruz
+        data = resp.json()
+        
+        # Örnekte verdiğin "hlsUrl" anahtarını arıyoruz
+        hls_url = data.get("hlsUrl")
 
-        if "#EXTM3U" in text:
-            print(f"  ✓ Valid m3u8 for {slug}")
-            return text, None
+        if hls_url and "googlevideo.com" in hls_url:
+            print(f"  ✓ URL extracted for {slug}")
+            # Standart bir M3U8 dosyası içeriği oluşturuyoruz
+            m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\n{hls_url}"
+            return m3u8_content, None
         else:
-            print(f"  ✗ Invalid response for {slug}")
-            return None, "InvalidContent"
+            print(f"  ✗ hlsUrl not found in response for {slug}")
+            return None, "NoUrlFound"
 
     except Exception as e:
-        print(f"  ✗ Error fetching {slug}: {e}")
+        print(f"  ✗ Error fetching/parsing {slug}: {e}")
         return None, "RequestError"
-
 
 def save_stream(stream, content):
     slug = stream["slug"]
@@ -109,23 +106,19 @@ def save_stream(stream, content):
     try:
         with open(outfile, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"  ✓ Saved: {outfile}")
+        print(f"  ✓ Saved URL to M3U8: {outfile}")
         return True
     except Exception as e:
         print(f"  ✗ Cannot save {outfile}: {e}")
         return False
 
-
 def delete_old(stream):
     slug = stream["slug"]
     sub = stream.get("subfolder", "")
-
     path = Path(FOLDER_NAME) / sub / f"{slug}.m3u8"
-
     if path.exists():
         path.unlink()
         print(f"  ⚠ Deleted old: {path}")
-
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -133,15 +126,13 @@ def parse_args():
     p.add_argument("--folder", default=FOLDER_NAME)
     return p.parse_args()
 
-
 def main():
     global FOLDER_NAME
-
     args = parse_args()
     FOLDER_NAME = args.folder
 
     print(f"✓ Using session: {SESSION_TYPE}")
-    print("✓ ENDPOINT is loaded from environment (hidden!)")
+    print("✓ Mode: JSON hlsUrl Extraction")
 
     total_ok = 0
     total_fail = 0
@@ -168,7 +159,6 @@ def main():
     print("\n=========================")
     print(f"Done: {total_ok} success / {total_fail} fail")
     print("=========================")
-
 
 if __name__ == "__main__":
     main()
