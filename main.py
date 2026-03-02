@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube Stream Updater - URL Extractor (JSON & Plain Text Compatible)
+YouTube Stream Updater - URL Extractor (Direct Text Mode)
 """
 
 import json
@@ -10,7 +10,6 @@ import argparse
 from pathlib import Path
 
 # --- ENDPOINT AYARI ---
-# Ortam değişkeninden ENDPOINT'i alıyoruz
 ENDPOINT = os.environ.get("ENDPOINT")
 if not ENDPOINT:
     print("❌ ERROR: ENDPOINT environment variable is not set!")
@@ -19,9 +18,8 @@ if not ENDPOINT:
 ENDPOINT = ENDPOINT.rstrip("/")
 
 FOLDER_NAME = "streams"
-TIMEOUT = 25
+TIMEOUT = 30 # YouTube yanıtları bazen yavaş olabilir, süreyi artırdık.
 
-# İstek motoru seçimi (curl_cffi veya standart requests)
 try:
     from curl_cffi import requests as curl_requests
     SESSION_TYPE = "curl_cffi"
@@ -35,12 +33,10 @@ else:
     session = None
 
 def load_config(path):
-    """JSON formatındaki kanal listesini yükler."""
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def make_request(url, headers):
-    """Belirlenen session tipiyle HTTP isteği atar."""
     if SESSION_TYPE == "curl_cffi":
         return curl_requests.get(
             url,
@@ -58,57 +54,53 @@ def make_request(url, headers):
         )
 
 def fetch_stream_url(stream):
-    """Endpoint'ten URL çeker ve M3U8 formatına dönüştürür."""
     stream_id = stream["id"]
     slug = stream["slug"]
 
+    # Senin verdiğin yapı: ENDPOINT/?ID=...
     url = f"{ENDPOINT}/?ID={stream_id}"
     print(f"  Fetching: {url}")
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "*/*",
-        "Connection": "keep-alive"
+        "Accept": "text/plain, */*"
     }
 
     try:
         resp = make_request(url, headers)
         
-        # 404 durumunda bir kez tekrar dene
-        if resp.status_code == 404:
-            print("  ⚠ 404 returned, retrying…")
-            resp = make_request(url, headers)
+        if resp.status_code >= 500:
+            print(f"  ✗ Server Error {resp.status_code}")
+            return None, "ServerError"
 
         resp.raise_for_status()
-        raw_text = resp.text.strip()
+        
+        # Yanıtı temizle (başındaki/sonundaki boşlukları sil)
+        raw_output = resp.text.strip()
 
-        hls_url = None
-
-        # --- AYIKLAMA MANTIĞI ---
-        # 1. Adım: Yanıt JSON mı diye kontrol et
-        try:
-            data = json.loads(raw_text)
-            hls_url = data.get("hlsUrl")
-        except (json.JSONDecodeError, ValueError):
-            # 2. Adım: JSON değilse, yanıtın kendisi direkt bir URL mi?
-            if raw_text.startswith("http"):
-                hls_url = raw_text
-
-        if hls_url:
-            print(f"  ✓ URL extracted for {slug}")
-            # M3U8 içeriğini oluştur (Direkt linki içeren yönlendirici dosya)
-            m3u8_content = f"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\n{hls_url}\n"
+        # --- YAKALAMA MANTIĞI ---
+        # Eğer gelen metin manifest.googlevideo.com içeriyorsa veya http ile başlıyorsa
+        if "googlevideo.com" in raw_output or raw_output.startswith("http"):
+            print(f"  ✓ URL found for {slug}")
+            
+            # IPTV Oynatıcılar için M3U8 formatı oluşturuyoruz
+            m3u8_content = (
+                "#EXTM3U\n"
+                "#EXT-X-VERSION:3\n"
+                "#EXT-X-STREAM-INF:BANDWIDTH=1280000,RESOLUTION=1280x720\n"
+                f"{raw_output}\n"
+            )
             return m3u8_content, None
         else:
-            print(f"  ✗ Could not find a valid URL in response for {slug}")
-            return None, "InvalidResponse"
+            # Gelen yanıt boş veya geçersizse (Error 500 veya boş dönme durumu)
+            print(f"  ✗ Invalid response (No URL found): {raw_output[:50]}...")
+            return None, "NoValidUrlFound"
 
     except Exception as e:
-        print(f"  ✗ Error fetching/parsing {slug}: {e}")
+        print(f"  ✗ Error: {str(e)}")
         return None, "RequestError"
 
 def save_stream(stream, content):
-    """İçeriği .m3u8 dosyası olarak kaydeder."""
     slug = stream["slug"]
     sub = stream.get("subfolder", "")
 
@@ -127,64 +119,44 @@ def save_stream(stream, content):
         return False
 
 def delete_old(stream):
-    """Başarısız olan veya artık yayında olmayan kanalın eski dosyasını siler."""
     slug = stream["slug"]
     sub = stream.get("subfolder", "")
     path = Path(FOLDER_NAME) / sub / f"{slug}.m3u8"
     if path.exists():
         path.unlink()
-        print(f"  ⚠ Deleted old/broken file: {path}")
-
-def parse_args():
-    """Komut satırı argümanlarını okur."""
-    p = argparse.ArgumentParser()
-    p.add_argument("config_files", nargs="+", help="Kanal listesi JSON dosyaları")
-    p.add_argument("--folder", default=FOLDER_NAME, help="Kaydedilecek ana klasör")
-    return p.parse_args()
+        print(f"  ⚠ Deleted broken/old link: {path}")
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config_files", nargs="+")
+    parser.add_argument("--folder", default=FOLDER_NAME)
+    args = parser.parse_args()
+
     global FOLDER_NAME
-    args = parse_args()
     FOLDER_NAME = args.folder
 
-    print(f"--- YouTube Stream Updater ---")
-    print(f"✓ Session Provider: {SESSION_TYPE}")
-    print(f"✓ Target Folder: {FOLDER_NAME}")
-
-    total_ok = 0
-    total_fail = 0
+    print(f"--- YouTube M3U8 Link Extractor ---")
+    print(f"Session: {SESSION_TYPE}")
 
     for cfg in args.config_files:
-        if not os.path.exists(cfg):
-            print(f"❌ Config file not found: {cfg}")
-            continue
-
-        print(f"\n📄 Processing: {cfg}")
+        if not os.path.exists(cfg): continue
+        
+        print(f"\n📄 File: {cfg}")
         streams = load_config(cfg)
 
         for i, stream in enumerate(streams, 1):
-            slug = stream.get('slug', f"stream_{i}")
+            slug = stream['slug']
             print(f"\n[{i}/{len(streams)}] {slug}")
 
             content, err = fetch_stream_url(stream)
 
             if content:
-                if save_stream(stream, content):
-                    total_ok += 1
-                else:
-                    total_fail += 1
+                save_stream(stream, content)
             else:
-                # Başarısız olursa eski (bozuk) dosyayı sil
+                # Eğer link bulunamazsa, eski (geçersiz) m3u8'i siler
                 delete_old(stream)
-                total_fail += 1
 
-    print("\n" + "="*30)
-    print(f"COMPLETED: {total_ok} Success / {total_fail} Fail")
-    print("="*30)
+    print("\n--- İşlem Tamamlandı ---")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nStopped by user.")
-        sys.exit(0)
+    main()
