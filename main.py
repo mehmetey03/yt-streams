@@ -17,7 +17,7 @@ if not ENDPOINT:
 
 ENDPOINT = ENDPOINT.rstrip("/")
 FOLDER_NAME = "streams"
-TIMEOUT = 30
+TIMEOUT = 50
 
 # Session motoru seçimi
 try:
